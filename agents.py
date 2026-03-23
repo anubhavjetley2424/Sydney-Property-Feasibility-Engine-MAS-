@@ -30,7 +30,10 @@ from tools import (
     scrape_id_data_page,
     estimate_street_median_sold,
     get_id_key_metrics,
-    merge_abs_approvals_with_da_trends
+    merge_abs_approvals_with_da_trends,
+    aggregate_da_hotstreets,
+    enrich_da_with_geocode,
+    update_prospectivity_excel
 )
 
 # 2. Import the LangChain MCP adapter to load 3rd-party tools
@@ -130,6 +133,21 @@ def street_median_tool(suburb: str, postcode: str, street: str) -> str:
 def abs_da_merge_tool(abs_csv: str, lga_2526_formatted_csv: str, da_trends_json: str) -> str:
     """Merges ABS approvals by LGA with DA trend outputs."""
     return str(asyncio.run(merge_abs_approvals_with_da_trends(abs_csv, lga_2526_formatted_csv, da_trends_json)))
+
+@tool("DA Hot Streets Aggregator")
+def da_hotstreets_tool(da_trends_json: str) -> str:
+    """Identifies hot streets and weekly/monthly DA volumes."""
+    return str(asyncio.run(aggregate_da_hotstreets(da_trends_json)))
+
+@tool("DA Geocode Enricher")
+def da_geocode_tool(da_trends_json: str) -> str:
+    """Adds geolocation to DA records from formatted address."""
+    return str(asyncio.run(enrich_da_with_geocode(da_trends_json)))
+
+@tool("Prospectivity Excel Updater")
+def prospectivity_excel_tool(report_json: str, output_path: str = "prospectivity_trends.xlsx") -> str:
+    """Writes prospectivity metrics into a structured Excel workbook."""
+    return str(asyncio.run(update_prospectivity_excel(report_json, output_path)))
 
 @tool("Universal Browser")
 def browser_tool(url: str) -> str:
@@ -298,7 +316,10 @@ class CouncilAgents:
                 id_key_metrics_tool,
                 council_tracker_url_tool,
                 council_da_tracker_scraper_tool,
+                da_geocode_tool,
+                da_hotstreets_tool,
                 abs_da_merge_tool,
+                prospectivity_excel_tool,
             ] + excel_mcp_tools,
             llm=gemini_llm,
             verbose=self.verbose

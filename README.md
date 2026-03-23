@@ -85,7 +85,7 @@ graph TD
 
 | Stage | Primary Sources | MCP / Tools |
 |---|---|---|
-| Suburb Prospectivity Analyst | ABS Data API, forecast.id, economy.id, housing.id, profile.id, DA trackers | `Socio‑Economic Suburb Scanner`, `ID Data Scraper`, `ID Key Metrics Extractor`, `Council DA Tracker Scraper`, `DA Hot Streets Aggregator`, `ABS Approvals + DA Merger` |
+| Suburb Prospectivity Analyst | ABS Data API, forecast.id, economy.id, housing.id, profile.id, DA trackers | `Socio‑Economic Suburb Scanner`, `ID Data Scraper`, `ID Key Metrics Extractor`, `Council DA Tracker Scraper`, `DA Geocode Enricher`, `DA Hot Streets Aggregator`, `ABS Approvals + DA Merger`, `Prospectivity Excel Updater` |
 | Property Scouting | Domain listings | `Property Scraper` (Browserbase + Playwright) |
 | Listing Images | Domain listing photos | `Listing Image Capturer` (Browserbase + Playwright) |
 | Site Survey | NSW ArcGIS (hazards), Nominatim (geo), Google Elevation | `NSW Planning API`, `Hazard Overlay Checker`, `Slope & Topography Analyzer` |
@@ -137,6 +137,9 @@ This is how the system acts like a human operator but remains fully autonomous.
 | `GIS Composite Map` | Mapbox + ArcGIS | Hazards + zoning + hillshade visual |
 | `ID Key Metrics Extractor` | Heuristic parser | Extract key headings from id.com.au pages |
 | `ABS Approvals + DA Merger` | Data merge | Merge ABS approvals by LGA with DA trend outputs |
+| `DA Hot Streets Aggregator` | Trend analysis | Hot streets + weekly/monthly DA volumes |
+| `DA Geocode Enricher` | Geocoding | Adds lat/lng to DA records |
+| `Prospectivity Excel Updater` | Excel IO | Writes prospectivity sheets for time-series tracking |
 
 ---
 
@@ -144,7 +147,7 @@ This is how the system acts like a human operator but remains fully autonomous.
 
 | Agent | Role | Tools | MCP Connections |
 |---|---|---|---|
-| Suburb Prospectivity Analyst | Scores suburbs for ROI + DA trends | `Socio‑Economic Suburb Scanner`, `ID Data Scraper`, `ID Key Metrics Extractor`, `Council DA Tracker Scraper`, `DA Hot Streets Aggregator`, `ABS Approvals + DA Merger` | Excel MCP |
+| Suburb Prospectivity Analyst | Scores suburbs for ROI + DA trends | `Socio‑Economic Suburb Scanner`, `ID Data Scraper`, `ID Key Metrics Extractor`, `Council DA Tracker Scraper`, `DA Geocode Enricher`, `DA Hot Streets Aggregator`, `ABS Approvals + DA Merger`, `Prospectivity Excel Updater` | Excel MCP |
 | Acquisition Scout | Finds properties and images | `Property Scraper`, `Listing Image Capturer`, `Street Median Sold Estimator` | None |
 | Geospatial Surveyor | Physical due diligence | `NSW Planning API`, `Slope`, `Hazard`, `Satellite` | None |
 | Policy Archivist | Finds and ingests DCPs | `Autonomous DCP Harvester` | Qdrant |
@@ -167,6 +170,19 @@ This is how the system acts like a human operator but remains fully autonomous.
 - **Policy ↔ Compliance loop:** Policy Archivist ingests DCP PDFs into Qdrant; Compliance Officer queries the latest clauses for risk scoring and follow‑up actions.
 - **Portfolio ↔ Presentation loop:** Portfolio Builder compiles a deterministic `deck_manifest.json`; Canva agent uses it to build a polished PPTX.
 - **Human‑in‑the‑loop optionality:** Any agent can be interrupted or re‑run with updated inputs (e.g., different council, different zoning criteria).
+
+---
+
+## Prospectivity Excel Schema
+
+The Suburb Prospectivity Analyst writes time-series signals into a structured workbook:
+
+| Sheet | Purpose | Example Columns |
+|---|---|---|
+| `Suburb_Scores` | ROI ranking snapshots | `date`, `council`, `suburb`, `roi_score`, `seifa_decile` |
+| `DA_Trends` | Weekly/monthly DA trends | `date`, `council`, `da_count_this_month`, `hot_streets_top5` |
+| `ABS_Approvals` | ABS approvals by LGA | `month`, `lga_code`, `approvals_dwellings_total`, `approvals_value_total` |
+| `ID_Metrics` | ID portal key metrics | `date`, `population`, `median_income`, `unemployment`, `dwellings` |
 
 ---
 
