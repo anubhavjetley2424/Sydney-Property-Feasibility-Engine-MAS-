@@ -148,7 +148,6 @@ def da_geocode_tool(da_trends_json: str) -> str:
 def prospectivity_excel_tool(report_json: str, output_path: str = "prospectivity_trends.xlsx") -> str:
     """Writes prospectivity metrics into a structured Excel workbook."""
     return str(asyncio.run(update_prospectivity_excel(report_json, output_path)))
-
 @tool("Universal Browser")
 def browser_tool(url: str) -> str:
     """Reads a webpage via Browserbase for deep data. Input: Full URL."""

@@ -1053,6 +1053,154 @@ def _extract_id_metrics_from_text(text: str) -> dict:
 
 
 @mcp.tool()
+async def get_id_key_metrics(url: str) -> str:
+    """
+    Scrapes an id.com.au/economy/housing/profile/forecast page and extracts key metrics.
+    """
+    page = await universal_page_reader(url)
+    # Extract only the visible text segment if present
+    visible_text = page
+    if isinstance(page, str) and "--- VISIBLE TEXT ---" in page:
+        try:
+            visible_text = page.split("--- VISIBLE TEXT ---", 1)[1]
+        except Exception:
+            visible_text = page
+    metrics = _extract_id_metrics_from_text(visible_text)
+    return json.dumps({"url": url, "metrics": metrics}, indent=2)
+
+
+@mcp.tool()
+async def merge_abs_approvals_with_da_trends(abs_csv: str, lga_2526_formatted_csv: str, da_trends_json: str) -> str:
+    """
+    Merge ABS building approvals (by LGA code) with DA trend signals.
+    abs_csv columns: app_month,own_sector,type_work,type_bld,lga_code,dwl,val
+    lga_2526_formatted_csv columns: lga_code,lga_name (or similar)
+    da_trends_json: list of DA records with council/LGA identifiers.
+    """
+    try:
+        import csv
+        import io
+
+        # Load ABS approvals
+        abs_rows = []
+        reader = csv.DictReader(io.StringIO(abs_csv))
+        for row in reader:
+            abs_rows.append(row)
+
+        # Load LGA mapping
+        lga_map = {}
+        map_reader = csv.DictReader(io.StringIO(lga_2526_formatted_csv))
+        for row in map_reader:
+            code = row.get("lga_code") or row.get("LGA_CODE") or row.get("code")
+            name = row.get("lga_name") or row.get("LGA_NAME") or row.get("name")
+            if code and name:
+                lga_map[str(code).strip()] = name.strip()
+
+        # Load DA trends
+        da_trends = json.loads(da_trends_json) if da_trends_json else []
+
+        # Aggregate approvals by LGA
+        approvals = {}
+        for r in abs_rows:
+            code = str(r.get("lga_code", "")).strip()
+            if not code:
+                continue
+            approvals.setdefault(code, {"dwl": 0.0, "val": 0.0, "rows": 0})
+            try:
+                approvals[code]["dwl"] += float(r.get("dwl") or 0)
+                approvals[code]["val"] += float(r.get("val") or 0)
+            except Exception:
+                pass
+            approvals[code]["rows"] += 1
+
+        # Aggregate DA by council name
+        da_by_council = {}
+        for d in da_trends:
+            council = d.get("council") or d.get("council_name") or d.get("lga") or "unknown"
+            da_by_council.setdefault(council, 0)
+            da_by_council[council] += 1
+
+        merged = []
+        for code, agg in approvals.items():
+            name = lga_map.get(code, f"LGA_{code}")
+            merged.append({
+                "lga_code": code,
+                "lga_name": name,
+                "approvals_dwellings_total": agg["dwl"],
+                "approvals_value_total": agg["val"],
+                "approvals_rows": agg["rows"],
+                "da_count": da_by_council.get(name, None)
+            })
+
+        return json.dumps({"rows": merged}, indent=2)
+    except Exception as e:
+        return f"ERROR merging approvals with DA trends: {str(e)}"
+
+
+@mcp.tool()
+async def aggregate_da_hotstreets(da_trends_json: str) -> str:
+    """
+    Aggregates DA trends to identify hot streets and weekly/monthly volumes.
+    Expects da_trends_json: list of DA dicts with address + date_lodged.
+    """
+    try:
+        import re
+        from datetime import datetime
+
+        da_trends = json.loads(da_trends_json) if da_trends_json else []
+
+        def norm_street(address: str) -> str:
+            if not address:
+                return ""
+            base = address.split(",")[0].strip()
+            base = re.sub(r"^\\d+\\s*", "", base)
+            base = re.sub(r"^\\d+[A-Za-z]?\\s*", "", base)
+            base = re.sub(r"\\s{2,}", " ", base)
+            return base.title()
+
+        def parse_date(s: str):
+            if not s:
+                return None
+            s = s.strip()
+            for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y"):
+                try:
+                    return datetime.strptime(s, fmt)
+                except Exception:
+                    continue
+            return None
+
+        street_counts = {}
+        weekly = {}
+        monthly = {}
+
+        for d in da_trends:
+            addr = d.get("address") or d.get("site") or ""
+            street = norm_street(addr)
+            if street:
+                street_counts[street] = street_counts.get(street, 0) + 1
+
+            dt = parse_date(d.get("date_lodged") or d.get("lodgement_date") or "")
+            if dt:
+                week_key = f"{dt.isocalendar().year}-W{dt.isocalendar().week:02d}"
+                month_key = f"{dt.year}-{dt.month:02d}"
+                weekly[week_key] = weekly.get(week_key, 0) + 1
+                monthly[month_key] = monthly.get(month_key, 0) + 1
+
+        hot_streets = sorted(street_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+
+        return json.dumps(
+            {
+                "hot_streets": [{"street": s, "da_count": c} for s, c in hot_streets],
+                "weekly_counts": weekly,
+                "monthly_counts": monthly,
+            },
+            indent=2,
+        )
+    except Exception as e:
+        return f"ERROR aggregating DA hot streets: {str(e)}"
+
+
+@mcp.tool()
 async def scrape_council_da_tracker(council_name: str, url: str) -> str:
     """
     Scrapes NSW council DA tracker pages with autonomous pagination.

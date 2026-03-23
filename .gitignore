@@ -25,6 +25,7 @@ site_audits/
 listing_images/
 gis_maps/
 *.xlsx
+*.csv
 *.pdf
 *.pptx
 
