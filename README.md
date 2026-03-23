@@ -10,6 +10,8 @@ This pipeline emulates a high‑performing property development team:
 - Produces compliant concept proposals.
 - Outputs a **premium PPTX slide deck** per property.
 
+> **Positioning:** This MAS is built for developers to validate feasibility early, before formal DA lodgement.
+
 ## What You Get
 - End‑to‑end autonomous feasibility pipeline.
 - GIS composite maps (hazards + zoning + hillshade) with legends.
@@ -43,17 +45,38 @@ graph LR
 
 ```mermaid
 graph TD
-  S1[Suburb Prospect Analyst<br/>ABS Data API + heuristics] --> S2[Property Scouting<br/>Domain + Browserbase MCP]
-  S2 --> S3[Listing Image Capture<br/>Browserbase + Playwright screenshots]
-  S2 --> S4[Site Survey + GIS<br/>NSW ArcGIS + Google Elevation + Mapbox]
-  S4 --> S5[DCP Ingestion + RAG<br/>PDF Ingestion + Qdrant]
-  S5 --> S6[Concept Proposal<br/>LLM generator]
-  S6 --> S7[Compliance Assessment<br/>Qdrant RAG + heuristics]
-  S3 --> S8[Profile Merge]
-  S4 --> S8
-  S7 --> S9[Portfolio Pack]
-  S9 --> S10[Deck Manifest]
-  S10 --> S11[Canva PPTX Deck]
+  %% Nodes
+  A1[Suburb Prospect Analyst]:::agent --> A2[Acquisition Scout]:::agent
+  A2 --> A3[Listing Image Capture]:::agent
+  A2 --> A4[Geospatial Surveyor]:::agent
+  A5[Policy Archivist]:::agent --> A6[Compliance Officer]:::agent
+  A4 --> A6
+  A6 --> A7[Concept Proposal]:::agent
+  A3 --> A8[Profile Merger]:::agent
+  A4 --> A8
+  A7 --> A9[Portfolio Builder]:::agent
+  A8 --> A9
+  A9 --> A10[Deck Manifest]:::artifact
+  A10 --> A11[Canva PPTX Deck]:::deliverable
+
+  %% Data sources and MCP tools (smaller nodes)
+  DS1[(ABS Data API)]:::data --> A1
+  DS2[(Domain Listings)]:::data --> A2
+  DS3[(Browserbase MCP)]:::mcp --> A2
+  DS4[(Browserbase MCP)]:::mcp --> A3
+  DS5[(NSW ArcGIS)]:::data --> A4
+  DS6[(Google Elevation)]:::data --> A4
+  DS7[(Mapbox Static API)]:::data --> A4
+  DS8[(DCP PDFs)]:::data --> A5
+  DS9[(Qdrant RAG)]:::data --> A6
+  DS10[(Canva MCP)]:::mcp --> A11
+
+  %% Styles
+  classDef agent fill:#0b2d2b,stroke:#0b2d2b,color:#f7f4ef,stroke-width:2px;
+  classDef data fill:#f0c987,stroke:#b17f2a,color:#2c1b10,stroke-width:1px;
+  classDef mcp fill:#b6d7ff,stroke:#1f4b99,color:#0a1b3f,stroke-width:1px;
+  classDef artifact fill:#f7f4ef,stroke:#3d3d3d,color:#2f2f2f,stroke-width:1px;
+  classDef deliverable fill:#f6e1ff,stroke:#7a3aa8,color:#3a1558,stroke-width:2px;
 ```
 
 ### Data Sources By Stage
@@ -71,11 +94,11 @@ graph TD
 
 ### Web Scraping + UI Automation (Browserbase)
 
-Browserbase provides a remote browser context for Playwright. The agents use it to:\n
-- Load target pages (Domain, council trackers).\n
-- Capture **full-size screenshots** and **element screenshots**.\n
-- Extract DOM content to decide next actions (e.g., paginate, open image galleries).\n
-- Drive UI interactions by click, scroll, and wait-for-render loops.\n
+Browserbase provides a remote browser context for Playwright. The agents use it to:
+- Load target pages (Domain, council trackers).
+- Capture **full-size screenshots** and **element screenshots**.
+- Extract DOM content to decide next actions (e.g., paginate, open image galleries).
+- Drive UI interactions by click, scroll, and wait-for-render loops.
 This is how the system acts like a human operator but remains fully autonomous.
 
 ---
