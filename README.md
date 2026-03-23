@@ -27,13 +27,12 @@ This pipeline emulates a high‑performing property development team:
 graph LR
   A[Socio‑Economic Analyst] --> B[Acquisition Scout]
   B --> C[Geospatial Surveyor]
-  C --> D[Policy Archivist]
+  C --> F[Proposal Architecture Designer]
+  F --> D[Policy Archivist]
   D --> E[Compliance Officer]
-  C --> F[Proposal Designer]
-  F --> G[Compliance Checker]
   B --> H[Profile Merger]
   C --> H
-  G --> I[Portfolio Builder]
+  E --> I[Portfolio Builder]
   H --> I
   I --> J[Canva Slide Deck]
   I --> K[Executive Report]
