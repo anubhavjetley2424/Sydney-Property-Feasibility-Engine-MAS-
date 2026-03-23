@@ -773,6 +773,65 @@ async def capture_domain_listing_images(listing_url: str, address: str) -> str:
 
 
 @mcp.tool()
+async def estimate_street_median_sold(suburb: str, postcode: str, street: str) -> str:
+    """
+    Best-effort street-level sold price signal from Domain sold listings.
+    """
+    api_key = os.environ.get("BROWSERBASE_API_KEY")
+    if not api_key:
+        return "ERROR: BROWSERBASE_API_KEY is missing."
+
+    search_url = f"https://www.domain.com.au/sold-listings/{suburb}-nsw-{postcode}/?sort=solddate-desc"
+    pattern = street.lower().strip()
+
+    async with async_playwright() as p:
+        try:
+            browser = await p.chromium.connect_over_cdp(
+                f"wss://connect.browserbase.com?apiKey={api_key}"
+            )
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = await context.new_page()
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(2000)
+
+            text = await page.evaluate("document.body.innerText")
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            matches = [ln for ln in lines if pattern in ln.lower()]
+
+            import re
+            prices = []
+            for ln in matches:
+                for m in re.findall(r'\\$\\s?[\\d,]+', ln):
+                    try:
+                        prices.append(int(m.replace('$', '').replace(',', '').strip()))
+                    except Exception:
+                        continue
+
+            median = None
+            if prices:
+                prices.sort()
+                mid = len(prices) // 2
+                median = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) // 2
+
+            await browser.close()
+
+            return json.dumps(
+                {
+                    "suburb": suburb,
+                    "postcode": postcode,
+                    "street": street,
+                    "source_url": search_url,
+                    "matches_found": len(matches),
+                    "median_sold_price": median,
+                    "evidence_lines": matches[:20],
+                },
+                indent=2,
+            )
+        except Exception as e:
+            return f"ERROR estimating street median: {str(e)}"
+
+
+@mcp.tool()
 async def generate_gis_composite_map(lat: float, lng: float) -> str:
     """
     Builds a composite GIS map (hazards + zoning outlines + hillshade base)
@@ -944,6 +1003,138 @@ async def universal_page_reader(url: str) -> str:
             return feedback
         except Exception as e:
             return f"ERROR: Browserbase failed on {url}. Reason: {str(e)}"
+
+
+@mcp.tool()
+async def scrape_id_data_page(url: str) -> str:
+    """
+    Scrapes id.com.au / economy.id.com.au / housing.id.com.au / profile.id.com.au pages.
+    Returns visible text for downstream analysis.
+    """
+    return await universal_page_reader(url)
+
+
+def _extract_id_metrics_from_text(text: str) -> dict:
+    """
+    Heuristic extractor for id.com.au pages. Looks for common headings and grabs nearby numeric values.
+    """
+    if not text:
+        return {}
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    joined = " | ".join(lines)
+
+    def find_after_keywords(keywords: list[str]):
+        for i, ln in enumerate(lines):
+            low = ln.lower()
+            if any(k in low for k in keywords):
+                # look ahead a few lines for numbers
+                window = " ".join(lines[i:i+4])
+                import re
+                nums = re.findall(r'\\b[\\d,.]+\\b', window)
+                if nums:
+                    return nums[0]
+        return None
+
+    return {
+        "population_now_or_forecast": find_after_keywords(["population"]),
+        "avg_annual_change": find_after_keywords(["average annual change", "avg annual change"]),
+        "households": find_after_keywords(["households"]),
+        "dwellings": find_after_keywords(["dwellings"]),
+        "occupancy_rate": find_after_keywords(["occupancy rate", "occupancy"]),
+        "median_age": find_after_keywords(["median age"]),
+        "median_income": find_after_keywords(["median income", "household income"]),
+        "unemployment": find_after_keywords(["unemployment"]),
+        "gross_product": find_after_keywords(["gross product", "gr product", "gross regional product"]),
+        "local_employment": find_after_keywords(["local employment", "employment"]),
+        "building_approvals": find_after_keywords(["building approvals"]),
+        "raw_excerpt": joined[:1200],
+    }
+
+
+@mcp.tool()
+async def get_id_key_metrics(url: str) -> str:
+    """
+    Scrapes an id.com.au/economy/housing/profile/forecast page and extracts key metrics.
+    """
+    page = await universal_page_reader(url)
+    # Extract only the visible text segment if present
+    visible_text = page
+    if isinstance(page, str) and "--- VISIBLE TEXT ---" in page:
+        try:
+            visible_text = page.split("--- VISIBLE TEXT ---", 1)[1]
+        except Exception:
+            visible_text = page
+    metrics = _extract_id_metrics_from_text(visible_text)
+    return json.dumps({"url": url, "metrics": metrics}, indent=2)
+
+
+@mcp.tool()
+async def merge_abs_approvals_with_da_trends(abs_csv: str, lga_2526_formatted_csv: str, da_trends_json: str) -> str:
+    """
+    Merge ABS building approvals (by LGA code) with DA trend signals.
+    abs_csv columns: app_month,own_sector,type_work,type_bld,lga_code,dwl,val
+    lga_2526_formatted_csv columns: lga_code,lga_name (or similar)
+    da_trends_json: list of DA records with council/LGA identifiers.
+    """
+    try:
+        import csv
+        import io
+
+        # Load ABS approvals
+        abs_rows = []
+        reader = csv.DictReader(io.StringIO(abs_csv))
+        for row in reader:
+            abs_rows.append(row)
+
+        # Load LGA mapping
+        lga_map = {}
+        map_reader = csv.DictReader(io.StringIO(lga_2526_formatted_csv))
+        for row in map_reader:
+            code = row.get("lga_code") or row.get("LGA_CODE") or row.get("code")
+            name = row.get("lga_name") or row.get("LGA_NAME") or row.get("name")
+            if code and name:
+                lga_map[str(code).strip()] = name.strip()
+
+        # Load DA trends
+        da_trends = json.loads(da_trends_json) if da_trends_json else []
+
+        # Aggregate approvals by LGA
+        approvals = {}
+        for r in abs_rows:
+            code = str(r.get("lga_code", "")).strip()
+            if not code:
+                continue
+            approvals.setdefault(code, {"dwl": 0.0, "val": 0.0, "rows": 0})
+            try:
+                approvals[code]["dwl"] += float(r.get("dwl") or 0)
+                approvals[code]["val"] += float(r.get("val") or 0)
+            except Exception:
+                pass
+            approvals[code]["rows"] += 1
+
+        # Aggregate DA by council name
+        da_by_council = {}
+        for d in da_trends:
+            council = d.get("council") or d.get("council_name") or d.get("lga") or "unknown"
+            da_by_council.setdefault(council, 0)
+            da_by_council[council] += 1
+
+        merged = []
+        for code, agg in approvals.items():
+            name = lga_map.get(code, f"LGA_{code}")
+            merged.append({
+                "lga_code": code,
+                "lga_name": name,
+                "approvals_dwellings_total": agg["dwl"],
+                "approvals_value_total": agg["val"],
+                "approvals_rows": agg["rows"],
+                "da_count": da_by_council.get(name, None)
+            })
+
+        return json.dumps({"rows": merged}, indent=2)
+    except Exception as e:
+        return f"ERROR merging approvals with DA trends: {str(e)}"
 
 
 @mcp.tool()

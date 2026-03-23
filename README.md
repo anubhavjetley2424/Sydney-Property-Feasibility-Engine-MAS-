@@ -25,7 +25,7 @@ This pipeline emulates a high‑performing property development team:
 
 ```mermaid
 graph LR
-  A[Socio‑Economic Analyst] --> B[Acquisition Scout]
+  A[Suburb Prospectivity Analyst] --> B[Acquisition Scout]
   B --> C[Geospatial Surveyor]
   C --> F[Proposal Architecture Designer]
   F --> D[Policy Archivist]
@@ -60,6 +60,9 @@ graph TD
 
   %% Data sources and MCP tools (smaller nodes)
   DS1[(ABS Data API)]:::data --> A1
+  DS11[(forecast.id / economy.id / housing.id / profile.id)]:::data --> A1
+  DS12[(Council DA Trackers)]:::data --> A1
+  DS13[(Excel MCP)]:::mcp --> A1
   DS2[(Domain Listings)]:::data --> A2
   DS3[(Browserbase MCP)]:::mcp --> A2
   DS4[(Browserbase MCP)]:::mcp --> A3
@@ -82,7 +85,7 @@ graph TD
 
 | Stage | Primary Sources | MCP / Tools |
 |---|---|---|
-| Suburb Prospect Analyst | ABS Data API (SEIFA, growth) | `Socio‑Economic Suburb Scanner` |
+| Suburb Prospectivity Analyst | ABS Data API, forecast.id, economy.id, housing.id, profile.id, DA trackers | `Socio‑Economic Suburb Scanner`, `ID Data Scraper`, `ID Key Metrics Extractor`, `Council DA Tracker Scraper`, `DA Hot Streets Aggregator`, `ABS Approvals + DA Merger` |
 | Property Scouting | Domain listings | `Property Scraper` (Browserbase + Playwright) |
 | Listing Images | Domain listing photos | `Listing Image Capturer` (Browserbase + Playwright) |
 | Site Survey | NSW ArcGIS (hazards), Nominatim (geo), Google Elevation | `NSW Planning API`, `Hazard Overlay Checker`, `Slope & Topography Analyzer` |
@@ -132,6 +135,8 @@ This is how the system acts like a human operator but remains fully autonomous.
 | `Portfolio Builder` | File outputs | Portfolio pack + deck manifest |
 | `Council DA Tracker Scraper` | Browserbase + Playwright | DA tracker scraping with pagination |
 | `GIS Composite Map` | Mapbox + ArcGIS | Hazards + zoning + hillshade visual |
+| `ID Key Metrics Extractor` | Heuristic parser | Extract key headings from id.com.au pages |
+| `ABS Approvals + DA Merger` | Data merge | Merge ABS approvals by LGA with DA trend outputs |
 
 ---
 
@@ -139,8 +144,8 @@ This is how the system acts like a human operator but remains fully autonomous.
 
 | Agent | Role | Tools | MCP Connections |
 |---|---|---|---|
-| Socio‑Economic Analyst | Scores suburbs for ROI | `Socio‑Economic Suburb Scanner` | None |
-| Acquisition Scout | Finds properties and images | `Property Scraper`, `Listing Image Capturer` | None |
+| Suburb Prospectivity Analyst | Scores suburbs for ROI + DA trends | `Socio‑Economic Suburb Scanner`, `ID Data Scraper`, `ID Key Metrics Extractor`, `Council DA Tracker Scraper`, `DA Hot Streets Aggregator`, `ABS Approvals + DA Merger` | Excel MCP |
+| Acquisition Scout | Finds properties and images | `Property Scraper`, `Listing Image Capturer`, `Street Median Sold Estimator` | None |
 | Geospatial Surveyor | Physical due diligence | `NSW Planning API`, `Slope`, `Hazard`, `Satellite` | None |
 | Policy Archivist | Finds and ingests DCPs | `Autonomous DCP Harvester` | Qdrant |
 | Compliance Officer | Retrieves DCP rules | `Qdrant Policy Query` | Qdrant |
@@ -148,8 +153,20 @@ This is how the system acts like a human operator but remains fully autonomous.
 | Compliance Checker | Risk assessment | `Compliance Checker` | Qdrant |
 | Profile Merger | Normalizes property JSON | `Property Profile Merger` | None |
 | Portfolio Builder | Builds pack + deck | `Portfolio Builder`, Canva MCP | Canva MCP |
+| Feasibility Finaliser | GO/NO‑GO decision | `Qdrant Policy Query` | Qdrant |
 | Executive Assessor | Financial feasibility | Excel MCP tools | Excel MCP |
 | Reporting Architect | Client deliverables | M365 MCP tools | Microsoft Graph MCP |
+
+---
+
+## Communication And Feedback Loops
+
+- **ReAct loops:** Agents observe tool output, reason about next actions, then act (e.g., paginate DA trackers, retry GIS layers, re‑rank properties).
+- **Handoff contract:** Each agent writes a structured output that downstream agents can consume (property profile, proposal JSON, compliance summary, deck manifest).
+- **Scout ↔ Surveyor feedback:** Scout supplies URLs and listing images; Surveyor returns planning, hazard, slope, and GIS map outputs that update the same profile.
+- **Policy ↔ Compliance loop:** Policy Archivist ingests DCP PDFs into Qdrant; Compliance Officer queries the latest clauses for risk scoring and follow‑up actions.
+- **Portfolio ↔ Presentation loop:** Portfolio Builder compiles a deterministic `deck_manifest.json`; Canva agent uses it to build a polished PPTX.
+- **Human‑in‑the‑loop optionality:** Any agent can be interrupted or re‑run with updated inputs (e.g., different council, different zoning criteria).
 
 ---
 

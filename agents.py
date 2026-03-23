@@ -26,7 +26,11 @@ from tools import (
     check_nsw_hazard_overlays,
     get_socio_economic_data,
     scrape_council_da_tracker,
-    capture_domain_listing_images
+    capture_domain_listing_images,
+    scrape_id_data_page,
+    estimate_street_median_sold,
+    get_id_key_metrics,
+    merge_abs_approvals_with_da_trends
 )
 
 # 2. Import the LangChain MCP adapter to load 3rd-party tools
@@ -106,6 +110,26 @@ def investment_scraper_tool(suburb: str, postcode: str) -> str:
 def listing_image_tool(listing_url: str, address: str) -> str:
     """Captures full-size listing images from Domain and saves them locally."""
     return str(asyncio.run(capture_domain_listing_images(listing_url, address)))
+
+@tool("ID Data Scraper")
+def id_data_tool(url: str) -> str:
+    """Scrapes id.com.au / economy.id.com.au / housing.id.com.au / profile.id.com.au pages."""
+    return str(asyncio.run(scrape_id_data_page(url)))
+
+@tool("ID Key Metrics Extractor")
+def id_key_metrics_tool(url: str) -> str:
+    """Extracts key metrics from id.com.au pages using heading heuristics."""
+    return str(asyncio.run(get_id_key_metrics(url)))
+
+@tool("Street Median Sold Estimator")
+def street_median_tool(suburb: str, postcode: str, street: str) -> str:
+    """Estimates street-level median sold price from Domain sold listings."""
+    return str(asyncio.run(estimate_street_median_sold(suburb, postcode, street)))
+
+@tool("ABS Approvals + DA Merger")
+def abs_da_merge_tool(abs_csv: str, lga_2526_formatted_csv: str, da_trends_json: str) -> str:
+    """Merges ABS approvals by LGA with DA trend outputs."""
+    return str(asyncio.run(merge_abs_approvals_with_da_trends(abs_csv, lga_2526_formatted_csv, da_trends_json)))
 
 @tool("Universal Browser")
 def browser_tool(url: str) -> str:
@@ -251,10 +275,45 @@ class CouncilAgents:
         return Agent(
             role="Lead Investment Acquisition Analyst",
             goal="Identify properties with the highest redevelopment ROI potential.",
-            backstory="Use 'Property Scraper' to find large blocks. Identify the address and URL. Then use 'Listing Image Capturer' to save full-size listing photos for each target.",
-            tools=[investment_scraper_tool, listing_image_tool], 
+            backstory="Use 'Property Scraper' to find large blocks. Identify the address and URL. Then use 'Listing Image Capturer' to save full-size listing photos for each target. Use 'Street Median Sold Estimator' for street-level pricing signals.",
+            tools=[investment_scraper_tool, listing_image_tool, street_median_tool], 
             llm=gemini_llm,
             max_iter=3,
+            verbose=self.verbose
+        )
+
+    def suburb_prospectivity_analyst(self) -> Agent:
+        return Agent(
+            role="Suburb Prospectivity Analyst",
+            goal="Continuously collect socio-economic and DA trend signals to rank suburbs and guide scouting.",
+            backstory=(
+                "Operate as a long-running research agent. Use ABS data, id.com.au datasets, and council DA "
+                "tracker scraping (last month + this month) to detect redevelopment hotspots by suburb and street. "
+                "Summarize trends into structured notes and, when possible, push quantitative summaries into Excel "
+                "via MCP for longitudinal tracking."
+            ),
+            tools=[
+                socio_economic_tool,
+                id_data_tool,
+                id_key_metrics_tool,
+                council_tracker_url_tool,
+                council_da_tracker_scraper_tool,
+                abs_da_merge_tool,
+            ] + excel_mcp_tools,
+            llm=gemini_llm,
+            verbose=self.verbose
+        )
+
+    def finaliser(self) -> Agent:
+        return Agent(
+            role="Feasibility Finaliser",
+            goal="Decide whether to proceed with each property based on proposal, compliance, and ROI evidence.",
+            backstory=(
+                "Review proposal outputs, compliance assessments, and GIS risk. Decide GO/NO-GO and "
+                "summarize the decision with rationale and required follow-ups."
+            ),
+            tools=[qdrant_query_tool],
+            llm=gemini_llm,
             verbose=self.verbose
         )
 
