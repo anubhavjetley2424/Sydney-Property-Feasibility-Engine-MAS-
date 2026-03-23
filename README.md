@@ -43,18 +43,40 @@ graph LR
 
 ```mermaid
 graph TD
-  S1[Socio‑Economic Scanner] --> S2[Property Scouting]
-  S2 --> S3[Listing Image Capture]
-  S2 --> S4[Site Survey + GIS]
-  S4 --> S5[DCP Ingestion + RAG]
-  S5 --> S6[Concept Proposal]
-  S6 --> S7[Compliance Assessment]
+  S1[Suburb Prospect Analyst<br/>ABS Data API + heuristics] --> S2[Property Scouting<br/>Domain + Browserbase MCP]
+  S2 --> S3[Listing Image Capture<br/>Browserbase + Playwright screenshots]
+  S2 --> S4[Site Survey + GIS<br/>NSW ArcGIS + Google Elevation + Mapbox]
+  S4 --> S5[DCP Ingestion + RAG<br/>PDF Ingestion + Qdrant]
+  S5 --> S6[Concept Proposal<br/>LLM generator]
+  S6 --> S7[Compliance Assessment<br/>Qdrant RAG + heuristics]
   S3 --> S8[Profile Merge]
   S4 --> S8
   S7 --> S9[Portfolio Pack]
   S9 --> S10[Deck Manifest]
   S10 --> S11[Canva PPTX Deck]
 ```
+
+### Data Sources By Stage
+
+| Stage | Primary Sources | MCP / Tools |
+|---|---|---|
+| Suburb Prospect Analyst | ABS Data API (SEIFA, growth) | `Socio‑Economic Suburb Scanner` |
+| Property Scouting | Domain listings | `Property Scraper` (Browserbase + Playwright) |
+| Listing Images | Domain listing photos | `Listing Image Capturer` (Browserbase + Playwright) |
+| Site Survey | NSW ArcGIS (hazards), Nominatim (geo), Google Elevation | `NSW Planning API`, `Hazard Overlay Checker`, `Slope & Topography Analyzer` |
+| GIS Composite Map | NSW ArcGIS polygons + Mapbox style w/ hillshade | `GIS Composite Map` |
+| DCP Ingestion | Council DCP PDFs | `Autonomous DCP Harvester`, `PDF Ingestion Engine` |
+| Compliance | Qdrant RAG + rules heuristics | `Qdrant Policy Query`, `Compliance Checker` |
+| Deck Production | Canva MCP | `@canva/cli@latest mcp` |
+
+### Web Scraping + UI Automation (Browserbase)
+
+Browserbase provides a remote browser context for Playwright. The agents use it to:\n
+- Load target pages (Domain, council trackers).\n
+- Capture **full-size screenshots** and **element screenshots**.\n
+- Extract DOM content to decide next actions (e.g., paginate, open image galleries).\n
+- Drive UI interactions by click, scroll, and wait-for-render loops.\n
+This is how the system acts like a human operator but remains fully autonomous.
 
 ---
 
