@@ -1,0 +1,35 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+ENV/
+.env.*
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+dist/
+build/
+*.egg-info/
+
+# Data and outputs
+portfolio/
+site_audits/
+listing_images/
+gis_maps/
+*.xlsx
+*.pdf
+*.pptx
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
