@@ -31,6 +31,14 @@ The new React-based FE visualizes Langchain MAS intelligence, displaying data-dr
 *(Property Drill-Down & Policy Assistant AI View)*
 ![Live Prospects and AI Policy Agent](dashboard/dashboard-screenshot-prospects.png)
 
+### The Hill Shire Modern Bento Dashboard (v2.0)
+The repository now includes a high-density, minimalist analytical interface for **The Hills Shire Council**. Key features:
+- **Full-Width Bento Grid:** Modular layout optimized for property feasibility workflows.
+- **Suburb-Level Metrics:** Population density, dwelling types (Houses vs Units), and tenure profiles by suburb.
+- **Live Feasibility Targets:** Actionable prospecting tiles positioned next to historical sales maps.
+- **Supply Pipeline Tracking:** Deep tracking of building approvals and land use changes.
+- **DCP AI Assistant:** Integrated RAG-powered chatbot for local policy queries.
+
 ---
 
 ## Architecture At A Glance
