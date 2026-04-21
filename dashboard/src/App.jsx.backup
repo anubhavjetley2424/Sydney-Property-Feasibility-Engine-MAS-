@@ -1,0 +1,52 @@
+import React, { useState } from 'react';
+import { SUBURBS } from './data/suburbData';
+import Header from './components/Header';
+import OverviewTab from './components/OverviewTab';
+import SuburbTab from './components/SuburbTab';
+import ExploreCanvas from './components/ExploreCanvas';
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('overview');
+
+  const tabs = [
+    { id: 'overview', label: '🏠 Overview & Rankings' },
+    ...SUBURBS.map(s => ({ id: s.id, label: s.name })),
+  ];
+
+  return (
+    <div className="h-screen bg-background relative overflow-hidden">
+      <div className="relative z-10">
+        <Header />
+
+        {/* Tab Navigation */}
+        <nav className="sticky top-0 z-40 backdrop-blur-xl bg-background/90 border-b border-border">
+          <div className="max-w-[1500px] mx-auto px-5">
+            <div className="flex items-center gap-1.5 overflow-x-auto py-2 scrollbar-hide">
+              {tabs.map(t => (
+                <button
+                  key={t.id}
+                  id={`tab-${t.id}`}
+                  onClick={() => setActiveTab(t.id)}
+                  className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </nav>
+
+        {/* Tab Content */}
+        <main className="dashboard-main">
+          <ExploreCanvas resetKey={activeTab}>
+            {activeTab === 'overview' ? (
+              <OverviewTab onSelectSuburb={setActiveTab} />
+            ) : (
+              <SuburbTab suburbId={activeTab} />
+            )}
+          </ExploreCanvas>
+        </main>
+      </div>
+    </div>
+  );
+}

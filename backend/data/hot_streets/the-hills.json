@@ -1,0 +1,27 @@
+[
+  {
+    "street": "Showground Rd",
+    "daCount": 14,
+    "trend": "down"
+  },
+  {
+    "street": "Hezlett Rd",
+    "daCount": 10,
+    "trend": "down"
+  },
+  {
+    "street": "Windsor Rd",
+    "daCount": 8,
+    "trend": "stable"
+  },
+  {
+    "street": "Castle Hill Rd",
+    "daCount": 8,
+    "trend": "down"
+  },
+  {
+    "street": "Old Northern Rd",
+    "daCount": 6,
+    "trend": "stable"
+  }
+]

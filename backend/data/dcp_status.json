@@ -1,0 +1,32 @@
+{
+  "City of Parramatta": {
+    "status": "completed",
+    "timestamp": "2026-04-15T15:18:56.078633",
+    "docs_ingested": 0,
+    "details": "ERROR: Search returned no links. Check Browserbase connectivity."
+  },
+  "The Hills Shire Council": {
+    "status": "completed",
+    "timestamp": "2026-04-15T15:18:56.657523",
+    "docs_ingested": 0,
+    "details": "ERROR: Search returned no links. Check Browserbase connectivity."
+  },
+  "City of Ryde": {
+    "status": "completed",
+    "timestamp": "2026-04-15T15:18:56.733624",
+    "docs_ingested": 0,
+    "details": "ERROR: Search returned no links. Check Browserbase connectivity."
+  },
+  "Liverpool City Council": {
+    "status": "completed",
+    "timestamp": "2026-04-15T15:18:56.855978",
+    "docs_ingested": 0,
+    "details": "ERROR: Search returned no links. Check Browserbase connectivity."
+  },
+  "Canterbury-Bankstown Council": {
+    "status": "completed",
+    "timestamp": "2026-04-15T15:18:56.846959",
+    "docs_ingested": 0,
+    "details": "ERROR: Search returned no links. Check Browserbase connectivity."
+  }
+}

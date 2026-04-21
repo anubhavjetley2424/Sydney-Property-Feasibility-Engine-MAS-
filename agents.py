@@ -30,10 +30,14 @@ from tools import (
     scrape_id_data_page,
     estimate_street_median_sold,
     get_id_key_metrics,
+    load_id_local_data,
     merge_abs_approvals_with_da_trends,
     aggregate_da_hotstreets,
     enrich_da_with_geocode,
-    update_prospectivity_excel
+    update_prospectivity_excel,
+    update_shortlisted_properties_excel,
+    save_council_da_to_excel,
+    trigger_power_automate_flow
 )
 
 # 2. Import the LangChain MCP adapter to load 3rd-party tools
@@ -56,34 +60,46 @@ def _load_stdio_then_sse(label: str, stdio_cmd: list[str], sse_url: str):
     except Exception as e:
         print(f"{label}: stdio failed, trying SSE. Error: {e}")
         logging.info("%s: stdio failed, trying SSE. Error: %s", label, e)
-        return load_mcp_tools("sse", [sse_url])
+        try:
+            return load_mcp_tools("sse", [sse_url])
+        except Exception as e2:
+            print(f"{label}: SSE also failed. Agent will run without this MCP. Error: {e2}")
+            logging.warning("%s: SSE also failed: %s", label, e2)
+            return []
 
+# --- Excel MCP (independent) ---
 try:
     excel_mcp_tools = _load_stdio_then_sse(
         "Excel MCP",
         ["uvx", "excel-mcp-server", "stdio"],
         "http://localhost:8000/sse",
     )
+except Exception as e:
+    print(f"Warning: Excel MCP failed to load. {e}")
+    excel_mcp_tools = []
 
+# --- Microsoft 365 MCP (independent) ---
+try:
     missing = [k for k in ("CLIENT_ID", "CLIENT_SECRET", "TENANT_ID") if not os.environ.get(k)]
     if missing:
-        raise ValueError(
-            "Microsoft 365 MCP missing env vars: " + ", ".join(missing)
-        )
+        raise ValueError("Microsoft 365 MCP missing env vars: " + ", ".join(missing))
     m365_mcp_tools = load_mcp_tools("npx", ["@softeria/ms-365-mcp-server"])
     print("Microsoft 365 MCP connected.")
     logging.info("Microsoft 365 MCP connected.")
+except Exception as e:
+    print(f"Warning: Microsoft 365 MCP not available. {e}")
+    logging.warning("Microsoft 365 MCP not available: %s", e)
+    m365_mcp_tools = []
 
+# --- Canva MCP (independent) ---
+try:
     canva_mcp_tools = _load_stdio_then_sse(
         "Canva MCP",
         ["npx", "@canva/cli@latest", "mcp", "stdio"],
         "http://localhost:8001/sse",
     )
 except Exception as e:
-    print(f"Warning: External MCP servers not found or running. {e}")
-    logging.info("Warning: External MCP servers not found or running. %s", e)
-    excel_mcp_tools = []
-    m365_mcp_tools = []
+    print(f"Warning: Canva MCP failed to load. Run 'canva login' first. {e}")
     canva_mcp_tools = []
 
 # ---------------------------------------------------------
@@ -95,6 +111,32 @@ gemini_llm = LLM(
     temperature=0.1 
 )
 
+
+
+# ---------------------------------------------------------
+# Tool Output Normalizer
+# ---------------------------------------------------------
+
+def _run_json(coro):
+    try:
+        result = asyncio.run(coro)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+    if isinstance(result, (dict, list)):
+        return json.dumps({"status": "ok", "data": result}, indent=2)
+
+    if isinstance(result, str):
+        if result.strip().upper().startswith("ERROR"):
+            return json.dumps({"status": "error", "message": result}, indent=2)
+        try:
+            parsed = json.loads(result)
+            return json.dumps({"status": "ok", "data": parsed}, indent=2)
+        except Exception:
+            return json.dumps({"status": "ok", "data": result}, indent=2)
+
+    return json.dumps({"status": "ok", "data": str(result)}, indent=2)
+
 # ---------------------------------------------------------
 # Dynamic Tool Wrappers (For your custom async tools)
 # ---------------------------------------------------------
@@ -102,56 +144,61 @@ gemini_llm = LLM(
 @tool("Socio-Economic Suburb Scanner")
 def socio_economic_tool(suburb: str, postcode: str) -> str:
     """ABS Data API powered suburb scoring for high-ROI filtering."""
-    return str(asyncio.run(get_socio_economic_data(suburb, postcode)))
+    return _run_json(get_socio_economic_data(suburb, postcode))
 
 @tool("Property Scraper")
 def investment_scraper_tool(suburb: str, postcode: str) -> str:
     """Scrapes real estate listings to find redevelopment land. Input: suburb, postcode."""
-    return str(asyncio.run(domain_investment_scraper(suburb, postcode)))
+    return _run_json(domain_investment_scraper(suburb, postcode))
 
 @tool("Listing Image Capturer")
 def listing_image_tool(listing_url: str, address: str) -> str:
     """Captures full-size listing images from Domain and saves them locally."""
-    return str(asyncio.run(capture_domain_listing_images(listing_url, address)))
+    return _run_json(capture_domain_listing_images(listing_url, address))
 
 @tool("ID Data Scraper")
 def id_data_tool(url: str) -> str:
     """Scrapes id.com.au / economy.id.com.au / housing.id.com.au / profile.id.com.au pages."""
-    return str(asyncio.run(scrape_id_data_page(url)))
+    return _run_json(scrape_id_data_page(url))
 
 @tool("ID Key Metrics Extractor")
 def id_key_metrics_tool(url: str) -> str:
     """Extracts key metrics from id.com.au pages using heading heuristics."""
-    return str(asyncio.run(get_id_key_metrics(url)))
+    return _run_json(get_id_key_metrics(url))
+
+@tool("ID Local Data Loader")
+def id_local_data_tool(council_slug: str) -> str:
+    """Loads id.com.au metrics from locally-downloaded Excel files. Much more reliable than scraping. Input: council slug e.g. 'parramatta', 'the-hills'."""
+    return _run_json(load_id_local_data(council_slug))
 
 @tool("Street Median Sold Estimator")
 def street_median_tool(suburb: str, postcode: str, street: str) -> str:
     """Estimates street-level median sold price from Domain sold listings."""
-    return str(asyncio.run(estimate_street_median_sold(suburb, postcode, street)))
+    return _run_json(estimate_street_median_sold(suburb, postcode, street))
 
 @tool("ABS Approvals + DA Merger")
 def abs_da_merge_tool(abs_csv: str, lga_2526_formatted_csv: str, da_trends_json: str) -> str:
     """Merges ABS approvals by LGA with DA trend outputs."""
-    return str(asyncio.run(merge_abs_approvals_with_da_trends(abs_csv, lga_2526_formatted_csv, da_trends_json)))
+    return _run_json(merge_abs_approvals_with_da_trends(abs_csv, lga_2526_formatted_csv, da_trends_json))
 
 @tool("DA Hot Streets Aggregator")
 def da_hotstreets_tool(da_trends_json: str) -> str:
     """Identifies hot streets and weekly/monthly DA volumes."""
-    return str(asyncio.run(aggregate_da_hotstreets(da_trends_json)))
+    return _run_json(aggregate_da_hotstreets(da_trends_json))
 
 @tool("DA Geocode Enricher")
 def da_geocode_tool(da_trends_json: str) -> str:
     """Adds geolocation to DA records from formatted address."""
-    return str(asyncio.run(enrich_da_with_geocode(da_trends_json)))
+    return _run_json(enrich_da_with_geocode(da_trends_json))
 
 @tool("Prospectivity Excel Updater")
 def prospectivity_excel_tool(report_json: str, output_path: str = "prospectivity_trends.xlsx") -> str:
     """Writes prospectivity metrics into a structured Excel workbook."""
-    return str(asyncio.run(update_prospectivity_excel(report_json, output_path)))
+    return _run_json(update_prospectivity_excel(report_json, output_path))
 @tool("Universal Browser")
 def browser_tool(url: str) -> str:
     """Reads a webpage via Browserbase for deep data. Input: Full URL."""
-    return str(asyncio.run(universal_page_reader(url)))
+    return _run_json(universal_page_reader(url))
 
 @tool("Council Tracker URL")
 def council_tracker_url_tool(council_name: str, period: str = "this_month") -> str:
@@ -167,72 +214,82 @@ def council_tracker_url_tool(council_name: str, period: str = "this_month") -> s
 @tool("Council DA Tracker Scraper")
 def council_da_tracker_scraper_tool(council_name: str, url: str) -> str:
     """Scrapes DA tracker pages with pagination and returns structured JSON."""
-    return str(asyncio.run(scrape_council_da_tracker(council_name, url)))
+    return _run_json(scrape_council_da_tracker(council_name, url))
+
+@tool("Council DA Excel Writer")
+def council_da_excel_tool(da_tracker_json: str, output_path: str = "council_da_tracker.xlsx") -> str:
+    """Saves DA tracker JSON output (from Council DA Tracker Scraper) directly to Excel. Each council gets its own sheet plus a combined All_DAs sheet."""
+    return _run_json(save_council_da_to_excel(da_tracker_json, output_path))
+
+@tool("Power Automate Flow Trigger")
+def power_automate_tool(flow_name: str, payload_json: str) -> str:
+    """Triggers a Microsoft Power Automate flow by name via HTTP trigger. Requires POWER_AUTOMATE_<FLOW_NAME>_URL or POWER_AUTOMATE_DEFAULT_URL env var."""
+    return _run_json(trigger_power_automate_flow(flow_name, payload_json))
 
 @tool("PDF Ingestion Engine")
 def pdf_tool(pdf_url: str, council_name: str) -> str:
     """Loads a Council PDF into the Vector DB. Input: PDF URL, Council Name."""
-    return str(asyncio.run(ingest_pdf_from_url(pdf_url, council_name)))
+    return _run_json(ingest_pdf_from_url(pdf_url, council_name))
 
 @tool("Council DCP Crawler")
 def dcp_crawler_tool(council_name: str) -> str:
     """Discovers and ingests council DCP PDFs into the Vector DB. Input: Council Name."""
-    return str(asyncio.run(discover_and_ingest_dcp_pdfs(council_name)))
+    return _run_json(discover_and_ingest_dcp_pdfs(council_name))
 
 @tool("Autonomous DCP Harvester")
 def dcp_harvester_tool(council_name: str) -> str:
     """Autonomously discovers and ingests council DCP PDFs into the Vector DB. Input: Council Name."""
-    return str(asyncio.run(autonomous_dcp_harvester(council_name)))
+    return _run_json(autonomous_dcp_harvester(council_name))
 
 @tool("Architecture Proposal Generator")
 def proposal_tool(property_json: str) -> str:
     """Generates a simulated architecture proposal. Input: property JSON string."""
-    return str(asyncio.run(generate_architecture_proposal(property_json)))
+    return _run_json(generate_architecture_proposal(property_json))
 
 @tool("Site Area Estimator")
 def site_area_tool(page_text: str) -> str:
     """Estimates site area from listing text. Input: page text."""
-    return str(asyncio.run(estimate_site_area_from_text(page_text)))
+    return _run_json(estimate_site_area_from_text(page_text))
 
 @tool("Property Profile Merger")
 def profile_merge_tool(scout_json: str, surveyor_json: str) -> str:
     """Merges scout + surveyor outputs into a normalized property JSON."""
-    return str(asyncio.run(merge_property_profiles(scout_json, surveyor_json)))
+    return _run_json(merge_property_profiles(scout_json, surveyor_json))
 
 @tool("Compliance Checker")
 def compliance_tool(property_json: str, proposal_json: str) -> str:
     """Checks proposal vs DCP rules in Qdrant and returns assessment."""
-    return str(asyncio.run(assess_compliance(property_json, proposal_json)))
+    return _run_json(assess_compliance(property_json, proposal_json))
 
 @tool("Portfolio Builder")
 def portfolio_tool(property_json: str, proposal_json: str, compliance_json: str) -> str:
     """Builds a local portfolio pack (JSON + Markdown)."""
-    return str(asyncio.run(build_property_portfolio(property_json, proposal_json, compliance_json)))
+    return _run_json(build_property_portfolio(property_json, proposal_json, compliance_json))
 
 @tool("NSW Planning API")
 def nsw_planning_tool(address: str) -> str:
     """Queries NSW ArcGIS for State Zoning and Council details. Input: Full Address."""
-    return str(asyncio.run(get_nsw_planning_data(address)))
+    return _run_json(get_nsw_planning_data(address))
 
 @tool("Slope & Topography Analyzer")
 def slope_tool(lat: float, lng: float) -> str:
     """Calculates land gradient/steepness via Google Elevation. Input: lat, lng."""
-    return str(asyncio.run(check_topography_and_slope(lat, lng)))
+    return _run_json(check_topography_and_slope(lat, lng))
 
 @tool("Hazard Overlay Checker")
 def hazard_tool(lat: float, lng: float) -> str:
     """Fires live ArcGIS intersection queries for Bushfire and Flood. Input: lat, lng."""
-    return str(asyncio.run(check_nsw_hazard_overlays(lat, lng)))
+    return _run_json(check_nsw_hazard_overlays(lat, lng))
 
 @tool("Qdrant Policy Query")
 def qdrant_query_tool(council_name: str, query: str) -> str:
     """Queries Vector DB for local DCP rules. Input: Council Name, Question."""
-    return str(asyncio.run(query_qdrant_policy(council_name, query)))
+    return _run_json(query_qdrant_policy(council_name, query))
 
 @tool("Satellite Vision Inspector")
 def satellite_tool(lat: float, lng: float) -> str:
     """Fetches high-res imagery and executes VLM site analysis. Input: lat, lng."""
-    return str(asyncio.run(get_satellite_and_terrain_data(lat, lng)))
+    return _run_json(get_satellite_and_terrain_data(lat, lng))
 
 # ---------------------------------------------------------
 # CrewAI Agent Definitions
@@ -265,15 +322,18 @@ class CouncilAgents:
             "- Stop when Next is missing/disabled or page content stops changing.\n\n"
             "4. Filtering & Output Formatting:\n"
             "- Tag applications containing keywords: demolition, multi-dwelling, strata, subdivision, "
-            "two storey, boarding house.\n"
-            "- Return JSON: {council_name, total_applications_scraped, results: [...]}\n"
+            "two storey, boarding house, renovation, alterations, addition, secondary dwelling, granny flat.\n"
+            "- Return JSON: {council_name, total_applications_scraped, results: [...]}\n\n"
+            "5. Excel Persistence (REQUIRED):\n"
+            "- After scraping each council, pass the full JSON string to 'Council DA Excel Writer' "
+            "to save results to council_da_tracker.xlsx. Do not skip this step.\n"
         )
 
         return Agent(
             role="Suburb ROI Analyst (Data Acquisition & Scraping Module)",
             goal="Extract DA tracker signals and return structured JSON for ROI screening.",
             backstory=system_instructions,
-            tools=[council_tracker_url_tool, council_da_tracker_scraper_tool, browser_tool],
+            tools=[council_tracker_url_tool, council_da_tracker_scraper_tool, council_da_excel_tool, browser_tool],
             llm=gemini_llm,
             verbose=self.verbose
         )
@@ -292,8 +352,8 @@ class CouncilAgents:
         return Agent(
             role="Lead Investment Acquisition Analyst",
             goal="Identify properties with the highest redevelopment ROI potential.",
-            backstory="Use 'Property Scraper' to find large blocks. Identify the address and URL. Then use 'Listing Image Capturer' to save full-size listing photos for each target. Use 'Street Median Sold Estimator' for street-level pricing signals.",
-            tools=[investment_scraper_tool, listing_image_tool, street_median_tool], 
+            backstory="Use 'Property Scraper' to find large blocks. Identify the address and URL. Then use 'Listing Image Capturer' to save full-size listing photos for each target. Use 'Street Median Sold Estimator' for street-level pricing signals. Write shortlisted candidates to the Property Shortlist workbook.",
+            tools=[investment_scraper_tool, listing_image_tool, street_median_tool, prospectivity_excel_tool, update_shortlisted_properties_excel] + excel_mcp_tools,
             llm=gemini_llm,
             max_iter=3,
             verbose=self.verbose
@@ -311,6 +371,7 @@ class CouncilAgents:
             ),
             tools=[
                 socio_economic_tool,
+                id_local_data_tool,
                 id_data_tool,
                 id_key_metrics_tool,
                 council_tracker_url_tool,
@@ -377,7 +438,7 @@ class CouncilAgents:
             backstory="""You are an expert in financial modeling. You do not generate flat files.
             You have access to native Excel tools via MCP. You must open the master template, 
             map the terrain/hazard metrics into the correct cells, and run native formulas to calculate ROI.""",
-            tools=excel_mcp_tools,  # <--- Passing the LIVE 3rd-party tools directly here!
+            tools=(excel_mcp_tools or [prospectivity_excel_tool]),  # falls back to custom Excel tool if MCP unavailable
             llm=gemini_llm,
             verbose=self.verbose
         )
@@ -434,7 +495,7 @@ class CouncilAgents:
             role="Lead Reporting & Distribution Architect",
             goal="Synthesize everything and push to client via M365 + optional Power Automate flow.",
             backstory="Use Microsoft Graph & Canva/Power Automate for final locked PDF and automated stakeholder delivery.",
-            tools=m365_mcp_tools + canva_mcp_tools,   # + power_automate_mcp_tools if enabled
+            tools=m365_mcp_tools + canva_mcp_tools + [power_automate_tool],
             llm=gemini_llm,
             verbose=self.verbose
         )

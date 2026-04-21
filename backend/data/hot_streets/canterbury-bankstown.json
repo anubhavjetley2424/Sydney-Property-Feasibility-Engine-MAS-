@@ -1,0 +1,27 @@
+[
+  {
+    "street": "Chapel Rd",
+    "daCount": 10,
+    "trend": "up"
+  },
+  {
+    "street": "Wattle St",
+    "daCount": 10,
+    "trend": "up"
+  },
+  {
+    "street": "Edgar St",
+    "daCount": 8,
+    "trend": "up"
+  },
+  {
+    "street": "Stacey St",
+    "daCount": 5,
+    "trend": "stable"
+  },
+  {
+    "street": "Canterbury Rd",
+    "daCount": 3,
+    "trend": "down"
+  }
+]

@@ -1,9 +1,11 @@
 # Orchestration & LLMs
 crewai
+crewai[tools]
 langchain
 langchain-community
 langchain-text-splitters
 langchain-google-genai
+langchain-mcp-adapters
 google-generativeai
 
 # MCP & Web Scraping
@@ -18,3 +20,10 @@ qdrant-client
 sentence-transformers
 pypdf
 Pillow
+fpdf
+
+# Backend API
+fastapi
+uvicorn[standard]
+apscheduler
+python-dotenv

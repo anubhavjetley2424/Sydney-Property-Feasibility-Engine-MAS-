@@ -6,7 +6,7 @@
     },
     "m365-graph-server": {
       "command": "npx",
-      "args": ["@microsoft/mcp-ms-graph", "stdio"]
+      "args": ["@softeria/ms-365-mcp-server"]
     }
   }
 }

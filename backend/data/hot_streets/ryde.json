@@ -1,0 +1,27 @@
+[
+  {
+    "street": "Lane Cove Rd",
+    "daCount": 14,
+    "trend": "up"
+  },
+  {
+    "street": "Blaxland Rd",
+    "daCount": 12,
+    "trend": "down"
+  },
+  {
+    "street": "Herring Rd",
+    "daCount": 12,
+    "trend": "down"
+  },
+  {
+    "street": "Victoria Rd",
+    "daCount": 10,
+    "trend": "stable"
+  },
+  {
+    "street": "Twin Rd",
+    "daCount": 4,
+    "trend": "up"
+  }
+]

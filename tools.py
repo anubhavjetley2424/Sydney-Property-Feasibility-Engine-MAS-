@@ -14,6 +14,11 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 from urllib.parse import quote
 
+# Fix broken SSL cert path (PostgreSQL 18 overrides system certs)
+import certifi
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+
 # Vector DB & LangChain Imports
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
@@ -29,7 +34,15 @@ mcp = FastMCP("SydneyPlanningEngine")
 
 # Initialize Qdrant (hosted preferred; fallback optional)
 _qdrant_client = None
-embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+_embeddings_model = None
+
+
+def _get_embeddings_model():
+    """Lazy-load embeddings model to avoid import-time network calls."""
+    global _embeddings_model
+    if _embeddings_model is None:
+        _embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    return _embeddings_model
 
 
 def _get_qdrant_client() -> QdrantClient:
@@ -144,6 +157,56 @@ def _safe_float(value, default=None):
         return float(value)
     except Exception:
         return default
+
+
+def _as_float(value):
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            v = value.replace(",", "").strip()
+            return float(v)
+    except Exception:
+        return None
+    return None
+
+
+def _append_rows_to_excel(path, sheet, rows):
+    if not rows:
+        return
+    import pandas as pd
+    from pathlib import Path
+
+    path = Path(path)
+    df_new = pd.DataFrame(rows)
+    if path.exists():
+        with pd.ExcelWriter(path, engine="openpyxl", mode="a", if_sheet_exists="overlay") as writer:
+            try:
+                df_existing = pd.read_excel(path, sheet_name=sheet)
+                df_out = pd.concat([df_existing, df_new], ignore_index=True)
+            except Exception:
+                df_out = df_new
+            df_out.to_excel(writer, sheet_name=sheet, index=False)
+    else:
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            df_new.to_excel(writer, sheet_name=sheet, index=False)
+
+
+async def _http_get_json(client: httpx.AsyncClient, url: str, *, params=None, headers=None, timeout: float = 20.0, retries: int = 3, backoff: float = 1.0) -> dict:
+    last_err = None
+    for attempt in range(retries):
+        try:
+            res = await client.get(url, params=params, headers=headers, timeout=timeout)
+            if res.status_code in (429, 500, 502, 503, 504):
+                raise httpx.HTTPStatusError(f"Retryable status {res.status_code}", request=res.request, response=res)
+            res.raise_for_status()
+            return res.json()
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                await asyncio.sleep(backoff * (2 ** attempt))
+                continue
+            raise last_err
 
 
 def _area_feasibility_notes(site_area_sqm: float | None) -> dict:
@@ -1031,7 +1094,7 @@ def _extract_id_metrics_from_text(text: str) -> dict:
                 # look ahead a few lines for numbers
                 window = " ".join(lines[i:i+4])
                 import re
-                nums = re.findall(r'\\b[\\d,.]+\\b', window)
+                nums = re.findall(r'\b[\d,.]+\b', window)
                 if nums:
                     return nums[0]
         return None
@@ -1217,6 +1280,13 @@ async def scrape_council_da_tracker(council_name: str, url: str) -> str:
         "subdivision",
         "two storey",
         "boarding house",
+        "renovation",
+        "alterations",
+        "alteration",
+        "addition",
+        "additions",
+        "secondary dwelling",
+        "granny flat",
     ]
 
     async with async_playwright() as p:
@@ -1411,6 +1481,37 @@ async def scrape_council_da_tracker(council_name: str, url: str) -> str:
         except Exception as e:
             return f"ERROR scraping tracker: {str(e)}"
 
+
+@mcp.tool()
+async def save_council_da_to_excel(da_tracker_json: str, output_path: str = "council_da_tracker.xlsx") -> str:
+    """
+    Saves the JSON output from scrape_council_da_tracker directly to Excel.
+    Accepts the raw JSON string returned by the DA tracker scraper.
+    Each council's results are written to a sheet named after the council.
+    A combined 'All_DAs' sheet is also written/appended across runs.
+    """
+    try:
+        data = json.loads(da_tracker_json)
+        council_name = data.get("council_name", "Unknown")
+        results = data.get("results", [])
+
+        if not results:
+            return json.dumps({"status": "no_data", "council": council_name, "output_path": output_path})
+
+        safe_sheet = council_name.replace(" ", "_")[:31]
+        _append_rows_to_excel(output_path, safe_sheet, results)
+        _append_rows_to_excel(output_path, "All_DAs", results)
+
+        return json.dumps({
+            "status": "ok",
+            "council": council_name,
+            "rows_written": len(results),
+            "output_path": output_path,
+        }, indent=2)
+    except Exception as e:
+        return f"ERROR saving DA tracker to Excel: {str(e)}"
+
+
 @mcp.tool()
 async def ingest_pdf_from_url(pdf_url: str, council_name: str) -> str:
     """Downloads a PDF, extracts text, and ingests it into Qdrant."""
@@ -1600,8 +1701,14 @@ async def get_nsw_planning_data(address: str) -> dict:
     """Geocodes an address, finds the Council (LGA), and queries NSW ArcGIS for state zoning."""
     async with httpx.AsyncClient() as client:
         geo_url = f"https://nominatim.openstreetmap.org/search?q={address}, NSW, Australia&format=json&addressdetails=1&limit=1"
-        geo_res = await client.get(geo_url, headers={"User-Agent": "SydneyBuildAI/1.0"})
-        geo_data = geo_res.json()
+        geo_data = await _http_get_json(
+            client,
+            geo_url,
+            headers={"User-Agent": "SydneyBuildAI/1.0"},
+            timeout=20.0,
+            retries=3,
+            backoff=1.5,
+        )
         
         if not geo_data:
             return {"error": "Could not geocode address"}
@@ -1609,21 +1716,54 @@ async def get_nsw_planning_data(address: str) -> dict:
         lat = geo_data[0]['lat']
         lng = geo_data[0]['lon']
         council_name = geo_data[0].get('address', {}).get('municipality', 'The Hills Shire Council')
-        
+
+        zoning_url = os.environ.get("NSW_ZONING_ARCGIS_URL")
+        if not zoning_url:
+            return {
+                "error": "Missing NSW_ZONING_ARCGIS_URL environment variable.",
+                "address": address,
+                "council": council_name,
+                "coordinates": {"lat": lat, "lng": lng},
+            }
+
+        params = {
+            "geometry": f"{lng},{lat}",
+            "geometryType": "esriGeometryPoint",
+            "inSR": "4326",
+            "spatialRel": "esriSpatialRelIntersects",
+            "outFields": "*",
+            "returnGeometry": "false",
+            "f": "json",
+        }
+        zoning_data = await _http_get_json(client, zoning_url, params=params, timeout=20.0, retries=3, backoff=1.5)
+        features = zoning_data.get("features", []) if isinstance(zoning_data, dict) else []
+        attrs = features[0].get("attributes", {}) if features else {}
+
+        def pick_attr(keys: list[str]):
+            for k in keys:
+                if k in attrs and attrs[k] not in (None, ""):
+                    return attrs[k]
+            return None
+
+        zoning = pick_attr(["ZONE", "ZONE_CODE", "ZONING", "SYM", "ZONE_NAME", "LANDUSE"])
+        max_height = pick_attr(["MAX_HEIGHT", "HEIGHT", "MAX_BLDG_HGT", "BLDG_HT"])
+        fsr = pick_attr(["FSR", "FLOOR_SPACE_RATIO", "PLOT_RATIO"])
+
         return {
             "address": address,
             "council": council_name,
             "coordinates": {"lat": lat, "lng": lng},
-            "zoning": "R3 Medium Density", 
-            "max_height": "9m",
-            "floor_space_ratio": "0.7:1",
+            "zoning": zoning,
+            "max_height": max_height,
+            "floor_space_ratio": fsr,
             "planning_data": {
                 "source": "NSW Planning API (ArcGIS + Nominatim)",
                 "council": council_name,
-                "zoning": "R3 Medium Density",
-                "max_height": "9m",
-                "floor_space_ratio": "0.7:1"
-            }
+                "zoning": zoning,
+                "max_height": max_height,
+                "floor_space_ratio": fsr,
+                "raw_attributes": attrs,
+            },
         }
 
 @mcp.tool()
@@ -1719,9 +1859,7 @@ async def check_topography_and_slope(lat: float, lng: float) -> str:
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, timeout=10.0)
-            response.raise_for_status()
-            data = response.json()
+            data = await _http_get_json(client, url, timeout=10.0, retries=3, backoff=1.0)
             
             if data['status'] == 'OK' and len(data['results']) >= 2:
                 elev1 = data['results'][0]['elevation']
@@ -1781,13 +1919,10 @@ async def check_nsw_hazard_overlays(lat: float, lng: float) -> str:
     async with httpx.AsyncClient() as client:
         try:
             # Fire both geometry intersection queries concurrently to save time
-            hazard_res, epi_res = await asyncio.gather(
-                client.get(hazard_url, params=params, timeout=15.0),
-                client.get(epi_url, params=params, timeout=15.0)
+            hazard_data, epi_data = await asyncio.gather(
+                _http_get_json(client, hazard_url, params=params, timeout=15.0, retries=3, backoff=1.0),
+                _http_get_json(client, epi_url, params=params, timeout=15.0, retries=3, backoff=1.0),
             )
-            
-            hazard_data = hazard_res.json() if hazard_res.status_code == 200 else {}
-            epi_data = epi_res.json() if epi_res.status_code == 200 else {}
             
             is_bushfire = False
             bushfire_cat = "None"
@@ -1851,7 +1986,7 @@ def _extract_id_metrics_from_text(text: str) -> dict:
             if any(k in low for k in keywords):
                 window = " ".join(lines[i:i+4])
                 import re
-                nums = re.findall(r'\\b[\\d,.]+\\b', window)
+                nums = re.findall(r'\b[\d,.]+\b', window)
                 if nums:
                     return nums[0]
         return None
@@ -1885,6 +2020,27 @@ async def get_id_key_metrics(url: str) -> str:
             visible_text = page
     metrics = _extract_id_metrics_from_text(visible_text)
     return json.dumps({"url": url, "metrics": metrics}, indent=2)
+
+
+@mcp.tool()
+async def load_id_local_data(council_slug: str) -> str:
+    """
+    Loads id.com.au data from locally-downloaded Excel files for a council.
+    Much more reliable than scraping — returns structured metrics from
+    forecast, profile, housing, and economy datasets.
+
+    Input: council slug, e.g. 'parramatta', 'the-hills', 'ryde', 'liverpool', 'canterbury-bankstown'
+    Returns: JSON dict of all extracted metrics.
+    """
+    from backend.id_data_loader import load_council_id_data
+    data = load_council_id_data(council_slug)
+    if not data:
+        return json.dumps({
+            "status": "no_data",
+            "message": f"No Excel files found in backend/data/id_com/{council_slug}/. "
+                       f"Download from id.com.au and save there (see ID_COM_DOWNLOAD_GUIDE.md).",
+        }, indent=2)
+    return json.dumps({"status": "ok", "council": council_slug, "metrics": data}, indent=2)
 
 
 @mcp.tool()
@@ -1968,11 +2124,18 @@ async def enrich_da_with_geocode(da_trends_json: str) -> str:
                     "https://nominatim.openstreetmap.org/search"
                     f"?q={addr}, NSW, Australia&format=json&addressdetails=1&limit=1"
                 )
-                res = await client.get(geo_url, headers={"User-Agent": "SydneyBuildAI/1.0"})
-                data = res.json() if res.status_code == 200 else []
+                data = await _http_get_json(
+                    client,
+                    geo_url,
+                    headers={"User-Agent": "SydneyBuildAI/1.0"},
+                    timeout=20.0,
+                    retries=3,
+                    backoff=1.5,
+                )
                 if data:
                     d["coordinates"] = {"lat": data[0]["lat"], "lng": data[0]["lon"]}
                 enriched.append(d)
+                await asyncio.sleep(1.0)
         return json.dumps(enriched, indent=2)
     except Exception as e:
         return f"ERROR enriching DA geocodes: {str(e)}"
@@ -2044,44 +2207,87 @@ async def merge_abs_approvals_with_da_trends(abs_csv: str, lga_2526_formatted_cs
 @mcp.tool()
 async def update_prospectivity_excel(report_json: str, output_path: str = "prospectivity_trends.xlsx") -> str:
     """
-    Writes/updates a structured Excel workbook with prospectivity metrics.
-    report_json should include optional keys: suburb_scores, da_trends, abs_approvals, id_metrics.
-    Each value should be a list of dicts (rows).
+    Writes prospectivity data into a single workbook with multiple sheets.
+    report_json optional keys:
+      - population_migration, housing, community_profile (list of dicts)
+      - suburb_scores, da_trends, abs_approvals, id_metrics (list of dicts)
+    Output sheets:
+      - Population_Migration
+      - Housing
+      - Community_Profile
+      - Suburb_Scores
+      - DA_Trends
+      - ABS_Approvals
+      - ID_Metrics
+      - Ranking (aggregated mean index from Suburb_Scores)
     """
     try:
         data = json.loads(report_json)
-        import pandas as pd
-        from pathlib import Path
+        outputs = {}
 
-        sheets = {
-            "Suburb_Scores": data.get("suburb_scores", []),
-            "DA_Trends": data.get("da_trends", []),
-            "ABS_Approvals": data.get("abs_approvals", []),
-            "ID_Metrics": data.get("id_metrics", []),
-        }
+        path = output_path
 
-        path = Path(output_path)
-        if path.exists():
-            with pd.ExcelWriter(path, engine="openpyxl", mode="a", if_sheet_exists="overlay") as writer:
-                for sheet, rows in sheets.items():
-                    if not rows:
+        # Component sheets
+        pm_rows = data.get("population_migration", [])
+        housing_rows = data.get("housing", [])
+        community_rows = data.get("community_profile", [])
+
+        _append_rows_to_excel(path, "Population_Migration", pm_rows)
+        _append_rows_to_excel(path, "Housing", housing_rows)
+        _append_rows_to_excel(path, "Community_Profile", community_rows)
+
+        # Analysis sheets
+        suburb_scores = data.get("suburb_scores", [])
+        da_trends = data.get("da_trends", [])
+        abs_approvals = data.get("abs_approvals", [])
+        id_metrics = data.get("id_metrics", [])
+
+        _append_rows_to_excel(path, "Suburb_Scores", suburb_scores)
+        _append_rows_to_excel(path, "DA_Trends", da_trends)
+        _append_rows_to_excel(path, "ABS_Approvals", abs_approvals)
+        _append_rows_to_excel(path, "ID_Metrics", id_metrics)
+
+        # Ranking sheet from suburb_scores numeric columns
+        ranking_rows = []
+        if suburb_scores:
+            by_suburb = {}
+            for row in suburb_scores:
+                suburb = row.get("suburb") or row.get("Suburb") or "Unknown"
+                nums = []
+                for k, v in row.items():
+                    if k.lower() in ("date", "council", "suburb"):
                         continue
-                    df_new = pd.DataFrame(rows)
-                    try:
-                        df_existing = pd.read_excel(path, sheet_name=sheet)
-                        df_out = pd.concat([df_existing, df_new], ignore_index=True)
-                    except Exception:
-                        df_out = df_new
-                    df_out.to_excel(writer, sheet_name=sheet, index=False)
-        else:
-            with pd.ExcelWriter(path, engine="openpyxl") as writer:
-                for sheet, rows in sheets.items():
-                    df = pd.DataFrame(rows)
-                    df.to_excel(writer, sheet_name=sheet, index=False)
+                    fv = _as_float(v)
+                    if fv is not None:
+                        nums.append(fv)
+                if not nums:
+                    continue
+                by_suburb.setdefault(suburb, []).append(sum(nums) / len(nums))
+            for suburb, scores in by_suburb.items():
+                ranking_rows.append(
+                    {"suburb": suburb, "aggregated_mean_score": round(sum(scores) / len(scores), 4)}
+                )
+            ranking_rows = sorted(ranking_rows, key=lambda r: r["aggregated_mean_score"], reverse=True)
+            _append_rows_to_excel(path, "Ranking", ranking_rows)
 
-        return json.dumps({"output_path": str(path)}, indent=2)
+        outputs["output_path"] = path
+        return json.dumps(outputs, indent=2)
     except Exception as e:
         return f"ERROR updating prospectivity Excel: {str(e)}"
+
+
+@mcp.tool()
+async def update_shortlisted_properties_excel(shortlist_json: str, output_path: str = "property_shortlist.xlsx") -> str:
+    """
+    Writes/updates a single-sheet workbook of shortlisted properties.
+    shortlist_json should be a list of dicts.
+    """
+    try:
+        rows = json.loads(shortlist_json) if shortlist_json else []
+        _append_rows_to_excel(output_path, "Shortlist", rows)
+        return json.dumps({"output_path": output_path}, indent=2)
+    except Exception as e:
+        return f"ERROR updating property shortlist Excel: {str(e)}"
 
 @mcp.tool("Professional Report Generator")
 def reporting_tool(data_json: str, address: str) -> str:
@@ -2117,6 +2323,38 @@ def reporting_tool(data_json: str, address: str) -> str:
     pdf.output(pdf_file)
     
     return f"SUCCESS: Generated {xl_file} and {pdf_file}"
+
+@mcp.tool()
+async def trigger_power_automate_flow(flow_name: str, payload_json: str) -> str:
+    """
+    Triggers a Microsoft Power Automate flow via its HTTP trigger URL.
+    flow_name maps to an env var: POWER_AUTOMATE_<FLOW_NAME_UPPER>_URL
+    e.g. flow_name='send_report' reads POWER_AUTOMATE_SEND_REPORT_URL.
+    payload_json: JSON string with data to POST to the flow.
+    Fallback: if POWER_AUTOMATE_DEFAULT_URL is set, it is used for any flow_name.
+    """
+    env_key = f"POWER_AUTOMATE_{flow_name.upper().replace(' ', '_').replace('-', '_')}_URL"
+    trigger_url = os.environ.get(env_key) or os.environ.get("POWER_AUTOMATE_DEFAULT_URL")
+    if not trigger_url:
+        return (
+            f"ERROR: No Power Automate trigger URL found. "
+            f"Set env var '{env_key}' or 'POWER_AUTOMATE_DEFAULT_URL'."
+        )
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+        async with httpx.AsyncClient() as client:
+            res = await client.post(trigger_url, json=payload, timeout=30.0)
+            res.raise_for_status()
+            body = res.text[:500] if res.text else "(no body)"
+            return json.dumps({
+                "status": "triggered",
+                "flow_name": flow_name,
+                "http_status": res.status_code,
+                "response": body,
+            }, indent=2)
+    except Exception as e:
+        return f"ERROR triggering Power Automate flow '{flow_name}': {str(e)}"
+
 
 if __name__ == "__main__":
     mcp.run()

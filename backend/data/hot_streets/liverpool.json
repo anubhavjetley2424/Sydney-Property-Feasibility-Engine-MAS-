@@ -1,0 +1,27 @@
+[
+  {
+    "street": "George St",
+    "daCount": 14,
+    "trend": "up"
+  },
+  {
+    "street": "Hume Hwy",
+    "daCount": 13,
+    "trend": "up"
+  },
+  {
+    "street": "Moore St",
+    "daCount": 12,
+    "trend": "up"
+  },
+  {
+    "street": "Bigge St",
+    "daCount": 7,
+    "trend": "up"
+  },
+  {
+    "street": "Elizabeth St",
+    "daCount": 5,
+    "trend": "up"
+  }
+]

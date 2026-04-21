@@ -34,3 +34,9 @@ gis_maps/
 Thumbs.db
 .vscode/
 .idea/
+
+# JS
+node_modules/
+dashboard/node_modules/
+.npm
+package-lock.json

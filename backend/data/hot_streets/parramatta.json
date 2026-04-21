@@ -1,0 +1,37 @@
+[
+  {
+    "street": "Harris St",
+    "daCount": 14,
+    "trend": "up"
+  },
+  {
+    "street": "Albert St",
+    "daCount": 13,
+    "trend": "down"
+  },
+  {
+    "street": "Smith St",
+    "daCount": 13,
+    "trend": "down"
+  },
+  {
+    "street": "Church St",
+    "daCount": 10,
+    "trend": "up"
+  },
+  {
+    "street": "Macquarie St",
+    "daCount": 9,
+    "trend": "up"
+  },
+  {
+    "street": "George St",
+    "daCount": 6,
+    "trend": "stable"
+  },
+  {
+    "street": "Victoria Rd",
+    "daCount": 3,
+    "trend": "up"
+  }
+]

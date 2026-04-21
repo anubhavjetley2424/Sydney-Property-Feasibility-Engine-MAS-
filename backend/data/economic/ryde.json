@@ -1,0 +1,54 @@
+{
+  "forecast": {
+    "population_now_or_forecast": null,
+    "avg_annual_change": null,
+    "households": null,
+    "dwellings": null,
+    "occupancy_rate": null,
+    "median_age": null,
+    "median_income": null,
+    "unemployment": null,
+    "gross_product": null,
+    "local_employment": null,
+    "building_approvals": null
+  },
+  "economy": {
+    "population_now_or_forecast": null,
+    "avg_annual_change": null,
+    "households": null,
+    "dwellings": null,
+    "occupancy_rate": null,
+    "median_age": null,
+    "median_income": null,
+    "unemployment": null,
+    "gross_product": null,
+    "local_employment": null,
+    "building_approvals": null
+  },
+  "housing": {
+    "population_now_or_forecast": null,
+    "avg_annual_change": null,
+    "households": null,
+    "dwellings": null,
+    "occupancy_rate": null,
+    "median_age": null,
+    "median_income": null,
+    "unemployment": null,
+    "gross_product": null,
+    "local_employment": null,
+    "building_approvals": null
+  },
+  "profile": {
+    "population_now_or_forecast": null,
+    "avg_annual_change": null,
+    "households": null,
+    "dwellings": null,
+    "occupancy_rate": null,
+    "median_age": null,
+    "median_income": null,
+    "unemployment": null,
+    "gross_product": null,
+    "local_employment": null,
+    "building_approvals": null
+  }
+}
