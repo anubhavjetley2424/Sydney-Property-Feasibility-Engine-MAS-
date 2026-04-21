@@ -21,6 +21,18 @@ This pipeline emulates a high‑performing property development team:
 
 ---
 
+## Live Real Estate & Council Dashboard
+
+The new React-based FE visualizes Langchain MAS intelligence, displaying data-driven property scoring alongside live real-estate prospects, demographics, and regional growth metrics for councils across Sydney.
+
+*(Dashboard screenshot with Langchain MAS and Council Data)*
+![Dashboard Bento Grid Overview](dashboard/dashboard-screenshot-bento.png)
+
+*(Property Drill-Down & Policy Assistant AI View)*
+![Live Prospects and AI Policy Agent](dashboard/dashboard-screenshot-prospects.png)
+
+---
+
 ## Architecture At A Glance
 
 ```mermaid
